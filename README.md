@@ -17,5 +17,5 @@ following the instructions below.
 
 ### Commands
 ```
-python combined-routes.py --gpx-dir path/to/your/strava/activities
+./combined-routes.sh path/to/your/unzipped/strava/activities
 ```
