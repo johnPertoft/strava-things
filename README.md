@@ -1,6 +1,6 @@
 # Strava things
 The code in this repository makes use of your Strava data which you can download by
-following the instructions below.
+following the instructions below. I built this to track my progress in riding all the streets of Stockholm, the result of which can be viewed [here](https://johnpertoft.github.io/strava/index.html).
 
 ![](example.png)
 
