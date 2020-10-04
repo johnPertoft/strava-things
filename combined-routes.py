@@ -1,42 +1,49 @@
 import argparse
+from datetime import datetime
 import glob
+import logging
 import math
 import os
-import re
 from typing import List, Tuple
 
+from bs4 import BeautifulSoup
 import folium
 
 
-def _distance(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
+logger = logging.getLogger(__file__)
+logging.basicConfig(format="[%(levelname)s] [%(asctime)s] %(message)s")
+logger.setLevel(logging.INFO)
+
+Position = Tuple[float, float]
+
+
+def _load_gpx_file(gpx_file: str) -> Tuple[List[Position], datetime]:
+    logger.info(f"Loading {gpx_file}")
+    with open(gpx_file) as f:
+        content = BeautifulSoup(f.read(), "lxml")
+        start_time = content.find("metadata").find("time").text
+        start_time = datetime.strptime(start_time, "%Y-%m-%dT%H:%M:%SZ")
+        positions = content.find("trk").find("trkseg").find_all("trkpt")
+        positions = [(float(p.attrs["lat"]), float(p.attrs["lon"])) for p in positions]
+
+    return positions, start_time
+
+
+def _distance(p1: Position, p2: Position) -> float:
+    # TODO: Handle points on either side of meridian (?)
     return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
 
 
-def _load_positions(gpx_file: str) -> List[Tuple[float, float]]:
-    number_pattern = re.compile("[-]?[0-9]*[.]?[0-9]+")
-    positions = []
-    with open(gpx_file) as f:
-        for line in f:
-            if line.strip().startswith("<trkpt"):
-                lat, lng = re.findall(number_pattern, line)
-                positions.append((float(lat), float(lng)))
-    return positions
-
-
-def append_route(
+def _append_route(
     m: folium.Map,
-    gpx_file: str,
-    filter_irregular_paths: bool = True,
-    distance_threshold: float = 0.001,
-    min_positions_per_segment: int = 5
+    positions: List[Position],
+    filter_irregular_paths: bool,
+    distance_threshold: float,
+    min_positions_per_segment: int
 ) -> None:
-    print(f"Parsing {gpx_file}")
-    
     def add_line(positions):
-        line = folium.PolyLine(positions, color="orange", tooltip=f"From file {gpx_file}")
+        line = folium.PolyLine(positions, color="orange")
         line.add_to(m)
-
-    positions = _load_positions(gpx_file)
 
     if not filter_irregular_paths:
         add_line(positions)
@@ -53,6 +60,27 @@ def append_route(
                 add_line(segment_positions)
 
 
+def _append_routes(
+    m: folium.Map,
+    gpx_files: List[str],
+    filter_irregular_paths: bool = True,
+    distance_threshold: float = 0.001,
+    min_positions_per_segment: int = 5
+) -> None:
+    activities = [_load_gpx_file(gpx_file) for gpx_file in gpx_files]
+    activities = sorted(activities, key=lambda a: a[1])
+
+    for positions, _start_time in activities:
+        _append_route(
+            m,
+            positions,
+            filter_irregular_paths,
+            distance_threshold,
+            min_positions_per_segment)
+        
+        # TODO: Take screenshot of state here if we're producing a video.
+
+
 def main(args):
     m = folium.Map(
         tiles="CartoDB dark_matter" if not args.light else "Stamen toner",
@@ -63,8 +91,7 @@ def main(args):
     if not gpx_files:
         exit("No .gpx files found. Exiting")
 
-    for gpx_file in gpx_files:
-        append_route(m, gpx_file)
+    _append_routes(m, gpx_files)
 
     m.fit_bounds(m.get_bounds())
     m.save(args.output)
@@ -90,6 +117,11 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Whether to output a map with light background.")
+    
+    arg_parser.add_argument(
+        "--video",
+        action="store_true",
+        help="Whether to output a video.")
 
     main(arg_parser.parse_args())
 
