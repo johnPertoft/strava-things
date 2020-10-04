@@ -1,13 +1,18 @@
 import argparse
 from datetime import datetime
 import glob
+import itertools
 import logging
 import math
 import os
+import tempfile
+import time
 from typing import List, Tuple
 
 from bs4 import BeautifulSoup
 import folium
+import moviepy.editor as mpy
+from selenium import webdriver
 
 
 logger = logging.getLogger(__file__)
@@ -15,6 +20,10 @@ logging.basicConfig(format="[%(levelname)s] [%(asctime)s] %(message)s")
 logger.setLevel(logging.INFO)
 
 Position = Tuple[float, float]
+
+_CITY_BOUNDS = {
+    "stockholm": [[59.303377, 18.030198], [59.361293, 18.154801]]
+}
 
 
 def _load_gpx_file(gpx_file: str) -> Tuple[List[Position], datetime]:
@@ -60,13 +69,54 @@ def _append_route(
                 add_line(segment_positions)
 
 
+class _VideoWriter:
+    def __init__(self, map_bounds: Tuple[Position, Position]):
+        options = webdriver.FirefoxOptions()
+        options.headless = True
+        self._browser = webdriver.Firefox(options=options)
+        self._output_dir = tempfile.mkdtemp()
+        self._map_bounds = map_bounds
+        self._frame_index = itertools.count()
+
+    def add_frame(self, m: folium.Map) -> None:
+        frame_index = next(self._frame_index)
+
+        logger.info(f"Adding video frame {frame_index}")
+
+        # TODO: Can we output a png directly from here instead?
+        html_output_file = f"{frame_index}.html"
+        html_output_file = os.path.join(self._output_dir, html_output_file)
+        m.fit_bounds(self._map_bounds)
+        m.save(html_output_file)
+        
+        png_output_file = f"{frame_index}.png"
+        png_output_file = os.path.join(self._output_dir, png_output_file)
+        self._browser.get("file://" + html_output_file)
+        time.sleep(1)
+        self._browser.get_screenshot_as_file(png_output_file)
+
+    def write_video(self) -> None:
+        paths = glob.glob(os.path.join(self._output_dir, "*.png"))
+        paths = sorted(paths, key=lambda p: int(os.path.basename(p)[:-4]))
+
+        clips = [mpy.ImageClip(p).set_duration(1) for p in paths]
+        video = mpy.concatenate_videoclips(clips, method="compose")
+        video.write_videofile("combined-routes.mp4", fps=2)
+
+
 def _append_routes(
     m: folium.Map,
     gpx_files: List[str],
     filter_irregular_paths: bool = True,
     distance_threshold: float = 0.001,
-    min_positions_per_segment: int = 5
+    min_positions_per_segment: int = 5,
+    output_video: bool = False,
+    map_bounds: Tuple[Position, Position] = None
 ) -> None:
+    if output_video:
+        assert map_bounds is not None, "Need explicit map bounds for video output."
+        video_writer = _VideoWriter(map_bounds)
+
     activities = [_load_gpx_file(gpx_file) for gpx_file in gpx_files]
     activities = sorted(activities, key=lambda a: a[1])
 
@@ -78,7 +128,11 @@ def _append_routes(
             distance_threshold,
             min_positions_per_segment)
         
-        # TODO: Take screenshot of state here if we're producing a video.
+        if output_video:
+            video_writer.add_frame(m)
+
+    if output_video:
+        video_writer.write_video()
 
 
 def main(args):
@@ -87,13 +141,23 @@ def main(args):
         prefer_canvas=True,
         max_zoom=20)
 
+    if args.bounds is None:
+        map_bounds = None
+    else:
+        # TODO: Support both passing a city as well as custom bounds.
+        map_bounds = _CITY_BOUNDS[args.bounds]
+
     gpx_files = glob.glob(os.path.join(args.gpx_dir, "*.gpx"))
     if not gpx_files:
         exit("No .gpx files found. Exiting")
 
-    _append_routes(m, gpx_files)
+    _append_routes(
+        m,
+        gpx_files,
+        output_video=args.video,
+        map_bounds=map_bounds)
 
-    m.fit_bounds(m.get_bounds())
+    m.fit_bounds(map_bounds or m.get_bounds())
     m.save(args.output)
     print(f"Saved {args.output}")
 
@@ -122,6 +186,9 @@ if __name__ == "__main__":
         "--video",
         action="store_true",
         help="Whether to output a video.")
+    
+    arg_parser.add_argument(
+        "--bounds",
+        help="Custom coordinate bounds.")
 
     main(arg_parser.parse_args())
-
