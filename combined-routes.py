@@ -40,6 +40,7 @@ def _load_gpx_file(gpx_file: str) -> Tuple[List[Position], datetime]:
 
 def _distance(p1: Position, p2: Position) -> float:
     # TODO: Handle points on either side of meridian (?)
+    # TODO: Haversine distance?
     return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
 
 

@@ -14,7 +14,7 @@ ACTIVITIES_DIR=$(realpath "$1")
 shift
 
 IMAGE="strava"
-docker build -t ${IMAGE} . > /dev/null
+docker build -t ${IMAGE} .
 docker run -it --rm \
     -u $(id -u):$(id -g) \
     -v $(pwd):/app \
